@@ -1,9 +1,10 @@
 // rack.js — the single-module knob UI. Same engine as app.js (generator, pattern,
 // midi, audio); only the controls differ: one portrait case, knobs on top and the
 // pattern display inside the case below. app.js and the MVP are untouched.
-import { generate, generateBank, SCALES, LFO_WAVES, midiName, classicName } from "./generator.js?v=70";
+import { generate, generateBank, SCALES, LFO_WAVES, midiName, classicName } from "./generator.js?v=71";
 import { encodeWrite, emptyPattern } from "./pattern.js?v=65";
-import * as midi from "./midi.js?v=67";
+import * as midi from "./midi.js?v=68";
+import * as fel from "./felucca.js?v=1";
 import * as audio from "./audio.js?v=67";
 import { knob, sw } from "./knob.js?v=66";
 
@@ -45,23 +46,21 @@ function noteCount(p) {
 function renderBank() {
   const el = document.getElementById("bank");
   el.innerHTML = "";
-  const ls = Math.max(0, Math.round(state.loopFrom ?? 1) - 1);   // loop region, 0-based
-  const ln = Math.round(state.loop ?? 0);
+  const ls = Math.max(0, Math.round(state.loopFrom ?? 1) - 1);   // where the loop replay begins, 0-based
+  const ln = Math.round(state.loop ?? 0);                        // loop material = the first `ln` steps
   for (let s = 0; s < SLOTS; s++) {
     const p = bank[s];
     const cell = document.createElement("button");
     cell.className = "bankcell" + (s === selected ? " sel" : "");
     const num = document.createElement("span"); num.className = "bn"; num.textContent = s + 1;
     const mini = document.createElement("div"); mini.className = "mini";
-    const loopOn = p && ln >= 2 && ls + ln <= p.length;
+    const loopOn = p && ln >= 2 && ln <= p.length && ls < p.length;
     for (let i = 0; i < 64; i++) {
       const d = document.createElement("i");
       const cls = [];
       if (p && i < p.length && p.steps[i] && p.steps[i].notes.length) cls.push("on");
-      if (loopOn && i >= ls && i < ls + ln) {
-        cls.push("loop");
-        if (i === ls) cls.push("loopstart");
-      }
+      if (loopOn && i < ln) cls.push("loop");                    // the repeated material
+      if (loopOn && i === ls) cls.push("loopstart");             // where the replay starts
       d.className = cls.join(" ");
       mini.appendChild(d);
     }
@@ -128,9 +127,9 @@ function renderBuffer() {
   el.innerHTML = "";
   const p = bank[selected];
   if (!p) return;
-  const ls = Math.max(0, Math.round(state.loopFrom ?? 1) - 1);   // loop region, 0-based
-  const ln = Math.round(state.loop ?? 0);
-  const loopOn = ln >= 2 && ls + ln <= p.length;
+  const ls = Math.max(0, Math.round(state.loopFrom ?? 1) - 1);   // where the loop replay begins, 0-based
+  const ln = Math.round(state.loop ?? 0);                        // loop material = the first `ln` steps
+  const loopOn = ln >= 2 && ln <= p.length && ls < p.length;
   for (let i = 0; i < 64; i++) {
     const st = p.steps[i];
     const cell = document.createElement("div");
@@ -144,11 +143,9 @@ function renderBuffer() {
       cell.classList.add("on");
       cell.title = st.notes.map((n) => `${midiName(n.note)} v${n.vel}`).join("  ");
     } else if (i >= p.length) cell.classList.add("off");
-    if (loopOn && i >= ls && i < ls + ln) {
-      cell.classList.add("loop");
-      if (i === ls) cell.classList.add("loopstart");
-    }
-    if (st && st.echo != null) cell.classList.add("echo");   // a step the loop copied from the motif
+    if (loopOn && i < ln) cell.classList.add("loop");            // the material the loop repeats
+    if (loopOn && i === ls) cell.classList.add("loopstart");     // where the replay (re)starts
+    if (st && st.echo != null) cell.classList.add("echo");       // a step the loop copied from the material
     if (locks.has(`${selected}:${i}`)) cell.classList.add("locked");
     if (i === editStep) cell.classList.add("edit");
     cell.addEventListener("click", () => selectStep(i));
@@ -159,6 +156,7 @@ function renderBuffer() {
   renderEditor();
   fitSteps();
   renderScope();
+  renderRoll();
 }
 
 // Size every step dot to min(cell width, row height) so the circles can never
@@ -175,6 +173,139 @@ function fitSteps() {
   // size, so without it every render would shave another 2px (feedback loop).
   if (hSpace > 0 && hSpace / 8 < cellW - 4) dot = hSpace / 8;
   grid.style.setProperty("--dot", Math.max(8, Math.floor(dot) - 2) + "px");
+}
+
+// --------------------------------------------------------------------------- //
+// Piano roll — the Felucca SEQ > STEP view, shown when the Felucca profile is
+// on (the dot matrix stays for the Baud Girl bank firmwares). Pitch rows, step
+// columns, loop region, locks, echo steps and the live playhead.
+// --------------------------------------------------------------------------- //
+const ROLL_PADX = 22, ROLL_PADT = 6, ROLL_PADB = 8;
+let rollHover = null, rollGeo = null;
+
+function renderRoll() {
+  const cv = document.getElementById("roll");
+  if (!cv || !cv.clientWidth || profile !== "felucca") return;
+  const p = bank[selected];
+  if (!p) return;
+
+  const w = cv.clientWidth, h = cv.clientHeight || 200;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#0b0b0e";
+  ctx.fillRect(0, 0, w, h);
+
+  // the slot's pitch span, padded, never narrower than an octave
+  let lo = 127, hi = 0;
+  for (let i = 0; i < p.length && i < 64; i++)
+    for (const n of p.steps[i]?.notes ?? []) { if (n.note < lo) lo = n.note; if (n.note > hi) hi = n.note; }
+  if (hi < lo) { lo = 60; hi = 71; }
+  lo -= 2; hi += 2;
+  if (hi - lo < 13) { const c = Math.round((lo + hi) / 2); lo = c - 7; hi = c + 7; }
+
+  const rows = hi - lo + 1;
+  const innerW = w - ROLL_PADX - 4;
+  const innerH = h - ROLL_PADT - ROLL_PADB;
+  const colW = innerW / 64, rowH = innerH / rows;
+  rollGeo = { lo, hi, colW, rowH, w, h };
+  const X = (i) => ROLL_PADX + i * colW;
+  const Y = (n) => ROLL_PADT + (hi - n) * rowH;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#e8a33d";
+
+  // rows: in-key rows a touch brighter, C rows labelled
+  const scale = SCALES[state.scale] || SCALES.chromatic;
+  const root = ((Math.round(state.root ?? 60) % 12) + 12) % 12;
+  ctx.font = "8px 'Barlow Semi Condensed', sans-serif";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  for (let n = lo; n <= hi; n++) {
+    const inKey = scale.includes(((n - root) % 12 + 12) % 12);
+    ctx.fillStyle = inKey ? "rgba(255,255,255,0.045)" : "rgba(255,255,255,0.012)";
+    ctx.fillRect(ROLL_PADX, Y(n), innerW, rowH);
+    if (n % 12 === 0) {
+      ctx.strokeStyle = "rgba(255,255,255,0.12)";
+      ctx.beginPath(); ctx.moveTo(ROLL_PADX, Y(n) + rowH - 0.5); ctx.lineTo(w - 4, Y(n) + rowH - 0.5); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.38)";
+      ctx.fillText(midiName(n), 3, Y(n) + rowH / 2);
+    }
+  }
+
+  // step grid: bar lines every 16 steps, beat lines every 4
+  for (let i = 0; i <= 64; i += 4) {
+    ctx.strokeStyle = i % 16 === 0 ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.055)";
+    ctx.beginPath(); ctx.moveTo(X(i) + 0.5, ROLL_PADT); ctx.lineTo(X(i) + 0.5, h - ROLL_PADB); ctx.stroke();
+  }
+
+  // loop region (the material + where the replay starts)
+  const ls = Math.max(0, Math.round(state.loopFrom ?? 1) - 1);
+  const ln = Math.round(state.loop ?? 0);
+  if (ln >= 2 && ls < p.length) {
+    ctx.fillStyle = "rgba(255,255,255,0.05)";
+    ctx.fillRect(X(ls), ROLL_PADT, colW * Math.min(ln, p.length - ls), innerH);
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.beginPath(); ctx.moveTo(X(ls) + 0.5, ROLL_PADT); ctx.lineTo(X(ls) + 0.5, h - ROLL_PADB); ctx.stroke();
+  }
+
+  // notes: a bar per note, width from the Gate knob; echo copies dimmer
+  const gw = Math.max(0.35, Math.min(0.95, (state.gate ?? 50) / 100)) * colW;
+  for (let i = 0; i < 64; i++) {
+    const st = p.steps[i];
+    if (!st || i >= p.length || !st.notes.length) continue;
+    const echo = st.echo != null;
+    for (const n of st.notes) {
+      const y = Y(n.note);
+      ctx.globalAlpha = echo ? 0.4 : 0.6 + 0.4 * Math.min(1, (n.vel ?? 100) / 127);
+      ctx.fillStyle = accent;
+      ctx.fillRect(X(i) + 1, y + 1, Math.max(2, gw - 1), Math.max(2, rowH - 2));
+      ctx.globalAlpha = 1;
+      if (locks.has(`${selected}:${i}`)) {
+        ctx.strokeStyle = "rgba(255,255,255,0.6)";
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(X(i) + 1, y + rowH - 1.5);
+        ctx.lineTo(X(i) + Math.max(2, gw - 1), y + rowH - 1.5);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  // hover, selection, playhead
+  const hover = rollHover ?? scopeHover;
+  if (hover != null && hover !== editStep) {
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.strokeRect(X(hover) + 0.5, ROLL_PADT + 0.5, colW - 1, innerH - 1);
+  }
+  if (editStep >= 0) {
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(X(editStep) + 0.5, ROLL_PADT + 0.5, colW - 1, innerH - 1);
+    ctx.lineWidth = 1;
+  }
+  if (scopeNow != null) {
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(X(scopeNow) + 0.5, ROLL_PADT); ctx.lineTo(X(scopeNow) + 0.5, h - ROLL_PADB); ctx.stroke();
+    ctx.lineWidth = 1;
+  }
+}
+
+// Which step and pitch a pointer is over (for the tap-to-place editing).
+function rollHit(ev) {
+  const cv = document.getElementById("roll");
+  if (!cv || !rollGeo || profile !== "felucca") return null;
+  const r = cv.getBoundingClientRect();
+  const x = ev.clientX - r.left - ROLL_PADX;
+  const y = ev.clientY - r.top - ROLL_PADT;
+  if (x < 0 || y < 0 || x > rollGeo.w - ROLL_PADX || y > rollGeo.h - ROLL_PADT - ROLL_PADB) return null;
+  const i = Math.max(0, Math.min(63, Math.floor(x / rollGeo.colW)));
+  const note = Math.max(rollGeo.lo, Math.min(rollGeo.hi, rollGeo.hi - Math.floor(y / rollGeo.rowH)));
+  return { i, note };
 }
 
 // Wave scope — a DEBUG readout, deliberately plainer than the panel UI.
@@ -332,6 +463,7 @@ function renderScope() {
   ctx.textBaseline = "alphabetic";
   ctx.fillText(midiName(Math.round(lo)), w - 4, h - SCOPE_PADB - 1);
   ctx.textAlign = "left";
+  renderRoll();
 }
 
 // Header fields apply to every slot without a regen.
@@ -374,6 +506,7 @@ function scheduleRegen() {
 let tempoProbeTimer = null;
 let tempoProbeBusy = false;
 function scheduleTempoProbe() {
+  if (profile === "felucca") return;      // no 0x11 memory read on this firmware
   if (!midi.hasAccess()) return;
   clearTimeout(tempoProbeTimer);
   tempoProbeTimer = setTimeout(() => {
@@ -442,6 +575,7 @@ async function syncDeviceTempo(data = null, retries = 2) {
 
 async function doFreeze(slotIndex) {
   if (!bank[slotIndex]) return;
+  if (profile === "felucca") return doFreezeFelucca(slotIndex);
   syncHeader();
   try {
     status(`freezing slot ${slotIndex + 1} · ${Math.round(state.tempo)} bpm · ${RATE_NAMES[state.rate]}…`);
@@ -468,6 +602,7 @@ async function doFreeze(slotIndex) {
 }
 
 async function doSendAll() {
+  if (profile === "felucca") { status("Felucca has 4 tracks — use Freeze with the T1–T4 picker", "err"); return; }
   if (busy || !bank.length) return;
   busy = true;
   try {
@@ -496,6 +631,126 @@ async function doClearAll() {
     status(`all ${SLOTS} patterns cleared ✓${held ? ` · device holds ${held} bpm` : ""}`, "ok");
   } catch (e) { status(String(e.message || e), "err"); }
   finally { busy = false; }
+}
+
+// --------------------------------------------------------------------------- //
+// Felucca (editor protocol v7): detect the firmware, then freeze / clear a track
+// --------------------------------------------------------------------------- //
+let profile = null;      // null unknown · "felucca" · "baudgirl"
+let fwInfo = null;       // the INFO reply while the Felucca profile is on
+const felTrack = () => Math.max(0, Math.min(3, Number(document.getElementById("ftrack")?.value ?? 0) || 0));
+
+function paintProfile() {
+  const isFel = profile === "felucca";
+  const ft = document.getElementById("ftrack");
+  if (ft) ft.style.display = isFel ? "" : "none";
+  const roll = document.getElementById("roll");
+  if (roll) roll.style.display = isFel ? "block" : "none";
+  const steps = document.getElementById("steps");
+  if (steps) steps.style.display = isFel ? "none" : "";
+  if (isFel) renderRoll(); else fitSteps();
+  const freezeBtn = document.getElementById("freeze");
+  if (freezeBtn) freezeBtn.title = isFel ? "Write the selected slot into the target track (F)"
+                                         : "Write the selected slot into the FM-1 (F)";
+  const fillBtn = document.getElementById("fill");
+  if (fillBtn) {
+    fillBtn.disabled = isFel;
+    fillBtn.title = isFel ? "Felucca has 4 tracks, not a 16-slot bank — use Freeze per track"
+                          : "Write all 16 slots into the FM-1";
+  }
+  const clearBtn = document.getElementById("clearall");
+  if (clearBtn) clearBtn.title = isFel ? "Clear the 64 steps of the target track on the FM-1"
+                                       : "Erase all 16 patterns on the FM-1";
+  const diagBtn = document.getElementById("diag");
+  if (diagBtn && isFel) diagBtn.style.display = "none";
+}
+
+// INFO answers on Felucca (and its forks); the Baud Girl firmwares do not
+// implement it, which is what tells the two apart.
+async function detectFirmware() {
+  if (!midi.hasAccess() || !midi.findFm1()) { profile = null; fwInfo = null; paintProfile(); return null; }
+  try {
+    const rep = await midi.sendSysex(fel.frame(fel.CMD.INFO), 1200,
+      (d) => d[1] === 0x7D && d[2] === 0x46 && d[3] === 0x4C && d[4] === fel.CMD.INFO);
+    const args = fel.reply(rep, fel.CMD.INFO);
+    fwInfo = args ? fel.decodeInfo(args) : null;
+  } catch { fwInfo = null; }
+  profile = fwInfo ? "felucca" : "baudgirl";
+  paintProfile();
+  if (fwInfo) status(`FM-1 runs ${fwInfo.version} · freeze writes one of ${fwInfo.ntrk} tracks, ${fwInfo.nstep} steps`, "ok");
+  return fwInfo;
+}
+
+async function felReq(cmd, args, timeoutMs = 1500, tries = 2) {
+  for (let k = 0; k < tries; k++) {
+    const rep = await midi.sendSysex(fel.frame(cmd, args), timeoutMs,
+      (d) => d[1] === 0x7D && d[2] === 0x46 && d[3] === 0x4C && d[4] === (cmd & 0x7F));
+    const r = fel.reply(rep, cmd);
+    if (r) return r;
+  }
+  return null;
+}
+
+async function felGetStep(track, index) {
+  const r = await felReq(fel.CMD.TRACK_STEP, [track, index]);
+  if (!r) throw new Error(`no reply for track ${track + 1} step ${index + 1}`);
+  return fel.readStep(r);
+}
+
+async function felSetStep(track, index, st) {
+  const r = await felReq(fel.CMD.TRACK_STEP, [track, index, ...fel.stepBytes(st)]);
+  if (!r) throw new Error(`write refused at track ${track + 1} step ${index + 1}`);
+  return fel.readStep(r);
+}
+
+// Freeze slot -> one Felucca track. A dry run reads the track first and writes
+// only the steps that differ, so a repeat freeze is a read-only no-op.
+async function doFreezeFelucca(slotIndex) {
+  if (busy || !bank[slotIndex]) return;
+  busy = true;
+  const track = felTrack();
+  try {
+    const info = fwInfo ?? await detectFirmware();
+    const nstep = info?.nstep || 64;
+    const want = fel.pulseSteps(bank[slotIndex], nstep, Math.round(state.velocity ?? 100));
+    status(`freezing slot ${slotIndex + 1} → track ${track + 1}: reading ${nstep} steps…`);
+    const plan = [];
+    for (let i = 0; i < nstep; i++) {
+      const cur = await felGetStep(track, i);
+      if (!fel.sameStep(want[i], cur)) plan.push(i);
+      if (i % 16 === 15) status(`freezing slot ${slotIndex + 1} → track ${track + 1}: read ${i + 1}/${nstep}`);
+    }
+    if (!plan.length) { status(`slot ${slotIndex + 1} is already on track ${track + 1} ✓`, "ok"); return; }
+    for (let k = 0; k < plan.length; k++) {
+      const i = plan[k];
+      const read = await felSetStep(track, i, want[i]);
+      if (read.n !== want[i].n || read.notes.join() !== want[i].notes.join())
+        throw new Error(`step ${i + 1} did not take (device holds n=${read.n})`);
+      if (k % 8 === 7) status(`freezing slot ${slotIndex + 1} → track ${track + 1}: wrote ${k + 1}/${plan.length}`);
+    }
+    status(`slot ${slotIndex + 1} frozen → track ${track + 1} ✓ (${plan.length}/${nstep} steps changed)`, "ok");
+  } catch (e) {
+    status(String(e.message || e), "err");
+  } finally { busy = false; }
+}
+
+async function doClearTrackFelucca() {
+  if (busy) return;
+  const track = felTrack();
+  if (!confirm(`Clear the ${fwInfo?.nstep || 64} steps of track ${track + 1} on the FM-1?`)) return;
+  busy = true;
+  try {
+    const info = fwInfo ?? await detectFirmware();
+    const nstep = info?.nstep || 64;
+    const rest = fel.restStep();
+    for (let i = 0; i < nstep; i++) {
+      await felSetStep(track, i, rest);
+      if (i % 16 === 15) status(`clearing track ${track + 1}: ${i + 1}/${nstep}`);
+    }
+    status(`track ${track + 1} cleared ✓ (${nstep} steps)`, "ok");
+  } catch (e) {
+    status(String(e.message || e), "err");
+  } finally { busy = false; }
 }
 
 // --------------------------------------------------------------------------- //
@@ -774,12 +1029,12 @@ function buildRack() {
     ]),
 
     sect("Memory", 6, [
-      R("loopFrom", knob({ label: "Loop from", min: 1, max: Math.max(1, state.length - 2), step: 1, value: state.loopFrom, def: DEFAULT.loopFrom, size: "md",
-        format: (v) => `${Math.round(v)}`, tip: "where the motif starts. Everything before it plays once as an intro. The motif itself sounds once too — the copies begin one motif later (motif 42-49, copies from 50).", onInput: (v) => { state.loopFrom = Math.round(v); refreshLoopRanges(); scheduleRegen(); } })),
-      R("loop", knob({ label: "Loop len", min: 2, max: Math.max(2, state.length - 1), step: 1, value: state.loop, def: DEFAULT.loop, size: "md",
-        format: (v) => `${Math.round(v)}`, tip: "how many steps the motif holds. The motif tiles from its own end to the end of the phrase.", onInput: (v) => { state.loop = Math.round(v); refreshLoopInfo(); scheduleRegen(); } })),
+      R("loopFrom", knob({ label: "Loop from", min: 1, max: Math.max(1, state.length - 1), step: 1, value: state.loopFrom, def: DEFAULT.loopFrom, size: "md",
+        format: (v) => `${Math.round(v)}`, tip: "where the loop replay begins. Everything before it plays once; from here to the end the phrase's first Loop len steps repeat. Loop from 1 = the classic repeat-from-the-start.", onInput: (v) => { state.loopFrom = Math.round(v); refreshLoopRanges(); scheduleRegen(); } })),
+      R("loop", knob({ label: "Loop len", min: 2, max: Math.max(2, state.length), step: 1, value: state.loop, def: DEFAULT.loop, size: "md",
+        format: (v) => `${Math.round(v)}`, tip: "how many of the phrase's first steps form the loop. The loop replays them from Loop from onward, wrapping at Loop len.", onInput: (v) => { state.loop = Math.round(v); refreshLoopInfo(); scheduleRegen(); } })),
       R("dejaVu", knob({ label: "Deja Vu", min: 0, max: 100, value: state.dejaVu, def: DEFAULT.dejaVu, size: "md",
-        format: (v) => `${Math.round(v)}%`, tip: "chance each step past the motif copies it instead of playing a fresh note. 100% = solid repeat; lower lets new notes bleed through. Copied steps are marked in the grid.", onInput: setState("dejaVu") })),
+        format: (v) => `${Math.round(v)}%`, tip: "chance each step from Loop from onward copies the loop instead of playing a fresh note. 100% = solid repeat; copied steps get a dashed ring in the grid.", onInput: setState("dejaVu") })),
     ]),
   );
 }
@@ -835,9 +1090,8 @@ function refreshLoopRanges() {
   adjustingLoop = true;
   try {
     const L = Math.max(3, Math.round(state.length || 64));
-    from.setRange(1, Math.max(1, L - 2));
-    const a = Math.round(from.value);
-    len.setRange(2, Math.max(2, L - a + 1));
+    from.setRange(1, Math.max(1, L - 1));
+    len.setRange(2, Math.max(2, L));
   } finally { adjustingLoop = false; }
   refreshLoopInfo();
 }
@@ -849,7 +1103,7 @@ function refreshLoopInfo() {
   const a = Math.round(refs.loopFrom?.value ?? 1);
   const n = Math.round(refs.loop?.value ?? 8);
   const reps = (L - a + 1) / n;
-  const loopTxt = n >= 2 && a + n - 1 <= L ? `loop ${a}–${a + n - 1} ×${reps.toFixed(1)}` : "loop off";
+  const loopTxt = n >= 2 && n <= L && a < L ? `loop 1–${n} ×${reps.toFixed(1)} from ${a}` : "loop off";
   if (state.gateBlend > 0) {
     const blend = Math.min(100, Math.max(0, state.gateBlend ?? 0)) / 100;
     const M = Math.max(2, n >= 2 ? n : 16);
@@ -1086,8 +1340,18 @@ function buildTransport() {
     status(m ? "browser audio muted" : "browser audio on");
   });
   document.getElementById("freeze").addEventListener("click", () => doFreeze(selected));
+  // Felucca target track (shown only for the Felucca profile): Freeze and
+  // Clear act on it, since that firmware has four tracks instead of a 16-slot bank.
+  const ft = document.createElement("select");
+  ft.id = "ftrack";
+  ft.title = "Felucca target track — Freeze and Clear act on it";
+  ft.setAttribute("style", "display:none;font:600 11px/1.4 inherit;padding:2px 6px;border-radius:6px;background:#1b1926;color:#ececf0;border:1px solid #3a3750");
+  for (let i = 0; i < 4; i++) ft.append(new Option(`T${i + 1}`, String(i)));
+  document.getElementById("freeze").insertAdjacentElement("beforebegin", ft);
+  ft.addEventListener("change", () => status(`Felucca target: track ${Number(ft.value) + 1}`));
   document.getElementById("fill").addEventListener("click", doSendAll);
-  document.getElementById("clearall").addEventListener("click", doClearAll);
+  document.getElementById("clearall").addEventListener("click",
+    () => (profile === "felucca" ? doClearTrackFelucca() : doClearAll()));
   document.getElementById("diag")?.addEventListener("click", dumpGset);
   renderPresets();
 }
@@ -1135,14 +1399,20 @@ async function initMidi() {
     midi.onStateChange(() => {
       fill();
       if (midi.findFm1()) {
-        syncDeviceTempo().then((held) => {
-          if (held) status(`FM-1 connected · device holds ${held} BPM — Tempo synced`, "ok");
+        detectFirmware().then((info) => {
+          if (!info) syncDeviceTempo().then((held) => {
+            if (held) status(`FM-1 connected · device holds ${held} BPM — Tempo synced`, "ok");
+          });
         });
       }
     });
-    // WYSIWYG tempo: snap the knob to the device's real (unit-global) BPM.
-    const held = await syncDeviceTempo();
-    if (held) status(`FM-1: ${midi.findFm1()?.name ?? ""} · device holds ${held} BPM — Tempo synced`, "ok");
+    // WYSIWYG tempo: snap the knob to the device's real (unit-global) BPM — the
+    // Baud Girl memory read does not exist on Felucca, whose protocol is INFO/step.
+    const info = await detectFirmware();
+    if (!info) {
+      const held = await syncDeviceTempo();
+      if (held) status(`FM-1: ${midi.findFm1()?.name ?? ""} · device holds ${held} BPM — Tempo synced`, "ok");
+    }
   } catch (e) {
     status(String(e.message || e), "err");
     const n = nameEl();
@@ -1162,7 +1432,7 @@ document.addEventListener("keydown", (e) => {
 // Coming back to the tab re-syncs the Tempo knob to the device's real BPM —
 // the user may have turned the tempo knob on the unit while we were away.
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && midi.hasAccess() && midi.findFm1()) syncDeviceTempo();
+  if (!document.hidden && profile !== "felucca" && midi.hasAccess() && midi.findFm1()) syncDeviceTempo();
 });
 
 buildTheme();
@@ -1207,3 +1477,15 @@ wcv?.addEventListener("mousemove", (e) => {
   renderScope();
 });
 wcv?.addEventListener("mouseleave", () => { scopeHover = null; renderScope(); });
+
+// Piano roll editing: the first tap selects a step, a tap on the same column
+// places that pitch (the device's own step-editing feel). Hover shows the column.
+const rcv = document.getElementById("roll");
+rcv?.addEventListener("mousemove", (e) => { const hit = rollHit(e); rollHover = hit ? hit.i : null; renderRoll(); });
+rcv?.addEventListener("mouseleave", () => { rollHover = null; renderRoll(); });
+rcv?.addEventListener("pointerdown", (e) => {
+  const hit = rollHit(e);
+  if (!hit) return;
+  if (hit.i !== editStep) { selectStep(hit.i); return; }
+  setStepNote(hit.i, hit.note);
+});

@@ -330,16 +330,19 @@ export function generate(params) {
     if (gateQuant && snapRng() < gateQuant && i % snapGrid !== 0) continue;
     steps[i].notes = [{ note: clamp(Math.round(note), 0, 127), vel }];
   }
-  // Loop: everything before `loopStart` is an intro and plays once. From there the
-  // region [loopStart, loopStart+loopLen) tiles to the end of the phrase, so you can
-  // keep steps 1-12 and repeat steps 13-29. loopSlip is the chance each later step
-  // actually loops back, so below 100% fresh notes still bleed in. Fills up to Length.
-  if (loopLen >= 2 && loopStart + loopLen <= len) {
-    for (let i = loopStart + loopLen; i < len; i++) {
-      const src = loopStart + ((i - loopStart) % loopLen);
+  // Loop: the loop material is always the phrase's first `loopLen` steps. From
+  // `loopStart` to the end, each step copies the material (wrapping at loopLen),
+  // so "loop from 42" replays the phrase from its beginning starting at step 42,
+  // and loop from 1 (the default) is the classic "repeat the first N steps".
+  // loopSlip is the chance each step actually copies; below 100% fresh notes
+  // still bleed in. Copied steps carry `echo` so the grid can mark them.
+  if (loopLen >= 2 && loopLen <= len && loopStart < len) {
+    for (let i = loopStart; i < len; i++) {
+      const src = (i - loopStart) % loopLen;
+      if (src === i) continue;   // the first pass of the material is the material
       if (loopSlip >= 1 || loopRng() < loopSlip) {
         steps[i].notes = steps[src].notes.map((n) => ({ ...n }));
-        steps[i].echo = src;   // the grid marks copied steps, so the repeats are visible
+        steps[i].echo = src;
       }
     }
   }

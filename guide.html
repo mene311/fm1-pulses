@@ -210,16 +210,16 @@
 
   <h2>Memory</h2>
   <div class="param">
-    <h3>Loop from <span class="rng">step 1 … Length−2</span><span class="kind">knob</span></h3>
-    <p>Where the repeated region starts. Everything before it is an intro that plays once.</p>
+    <h3>Loop from <span class="rng">step 1 … Length−1</span><span class="kind">knob</span></h3>
+    <p>Where the loop replay begins. Everything before it plays once; from Loop from to the end of the phrase, the loop repeats. <b>Loop from 1</b> is the classic repeat-from-the-top: the steps after Loop len copy the first Loop len steps.</p>
   </div>
   <div class="param">
-    <h3>Loop len <span class="rng">2 … the rest of Length</span><span class="kind">knob</span></h3>
-    <p>How long that region is. Together with Loop from it tiles, say, steps 13 to 29 out to the end of the phrase.</p>
+    <h3>Loop len <span class="rng">2 … Length</span><span class="kind">knob</span></h3>
+    <p>How many of the phrase's first steps form the loop — the material that gets repeated. The loop replays it from Loop from onward, wrapping at Loop len, so with Loop len 8 the first eight steps are what you keep hearing.</p>
   </div>
   <div class="param">
     <h3>Deja Vu <span class="rng">0–100%</span><span class="kind">knob</span></h3>
-    <p>Chance a step past the loop copies the loop instead of playing its own note. 0% plays the phrase as generated, 100% repeats the region to the end. The readout in the display shows the region and how many repeats fit, and copied steps are marked in the grid with a dashed ring — the region itself sounds once, so those marks begin one region after Loop from.</p>
+    <p>Chance each step from Loop from onward copies the loop instead of playing its own note. 0% plays the phrase as generated, 100% makes a solid repeat from Loop from to the end. The readout in the display shows the loop and how many repeats fit, and copied steps are marked in the grid with a dashed ring.</p>
   </div>
 
   <h2>Workflow</h2>

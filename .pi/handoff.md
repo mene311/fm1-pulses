@@ -10,7 +10,7 @@ selected slot and morph it in real time).
 
 - **Live:** https://mene311.github.io/fm1-pulses/
 - **Repo:** `github.com/mene311/fm1-pulses` (public) — Pages deploys from `main` / root
-- **Local:** `~/fm1-pulses/` (phone — it is phone-local, no SSH needed)
+- **Local:** `~/fm1/projects/fm1-pulses/` (phone — it is phone-local, no SSH needed)
 - **Device notes / tools:** `~/Projects/mvave-fm1/` (see its README)
 - **Bluetooth:** the FM-1 has native **BLE MIDI** (documented + the standard BLE-MIDI
   GATT UUIDs are in its firmware). Plan, evidence, risks and the verification ladder live
@@ -37,6 +37,12 @@ selected slot and morph it in real time).
 - [x] **Live loop** — ▶ Play loops the selected slot; any slider re-derives the
       bank in real time (debounced 40 ms) and the loop follows within a step;
       playhead shows the current step
+- [x] **Felucca profile** — `js/felucca.js` (editor protocol codec: `INFO`,
+      `TRACK_STEP` read/write, step mapping) + `rack.js` detection/freeze/clear.
+      Validated on the real unit (Felucca 1.5.1, FM-1_915) over USB from the phone:
+      INFO parsed, step write→read→restore round trip clean. Freeze does a dry-run
+      diff and writes only changed steps into the T1–T4 target track.
+      Codec tests: `node js/felucca.test.mjs` (15 checks).
 - [x] **Freeze → FM-1** (selected) / **Send all 16**
 - [x] **7 themes** = the FM-1's own (decoded from its firmware)
 - [x] Tooltips on every control + typeable number boxes
@@ -68,8 +74,8 @@ selected slot and morph it in real time).
       ⚠ Unresolved on hardware: a single **Freeze** works (Android Chrome) but
       Clear fails with SysEx status 3 even with the FM-1's sequencer stopped, so
       the FM-1 may refuse an all-empty pattern. Probe files made for the verified
-      path: `~/probe-empty64.syx`, `~/probe-empty1.syx`; test with
-      `~/fm1tool.sh write ~/probe-empty64.syx` (a non-empty `~/fm1-mvp/*.syx` is
+      path: `~/fm1/sysex/probe-empty64.syx`, `~/probe-empty1.syx`; test with
+      `~/fm1/tools/fm1tool.sh write ~/fm1/sysex/probe-empty64.syx` (a non-empty `~/fm1/projects/fm1-mvp/*.syx` is
       the control). If empty patterns are refused, either find the real erase or
       drop the button.
 - [x] **Unipolar** checkbox — Off: notes spread both ways around the Offset note.
@@ -321,7 +327,7 @@ Facts that are solid:
 ## How it's deployed
 
 ```bash
-cd ~/Projects/fm1-pulses
+cd ~/fm1/projects/fm1-pulses
 git add -A && git commit -m "..." && git push    # Pages rebuilds in ~1 min
 python3 -m http.server 8099                      # local (Web MIDI needs localhost/https)
 ```

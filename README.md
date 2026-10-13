@@ -10,6 +10,14 @@ Vanilla JS + Web MIDI API + PWA. No server, no build step, no dependencies.
 On any firmware the app still works as a live MIDI broadcaster (▶ Play and
 morph in real time).
 
+**Felucca (1.5.x)** is detected automatically (its editor protocol answers
+`INFO`): **Freeze** then writes the selected slot into the **target track**
+picked with the T1–T4 selector, over the editor's `TRACK_STEP` command — a dry
+run reads the track first and writes only the steps that differ, so refreezing
+the same slot touches nothing. **Clear** empties that track's 64 steps; **Send
+16** stays a Baud Girl feature (Felucca has four tracks, not a 16-slot bank).
+The protocol lives in `js/felucca.js` (pure codec, `node js/felucca.test.mjs`).
+
 **Signal chain:** Clock → Gate Probability → S&H → LFO → Distribution → Quantizer → MIDI out → Buffer (Loop + Deja Vu).
 
 ## Quick start

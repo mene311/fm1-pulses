@@ -98,19 +98,32 @@ const STATUS_TEXT = {
 
 const hex = (a) => a.map((b) => b.toString(16).padStart(2, "0")).join(" ");
 
-// Wait for one SysEx reply on the FM-1's input port.
-function waitReply(input, timeoutMs) {
+// Wait for one SysEx reply on the FM-1's input port. `accept` narrows what
+// counts as the reply (the Felucca protocol shares the 0x7D header).
+function waitReply(input, timeoutMs, accept = null) {
   return new Promise((resolve) => {
+    const ok = accept || ((d) => d[1] === 0x7D);
     const timer = setTimeout(() => { input.onmidimessage = null; resolve(null); }, timeoutMs);
     input.onmidimessage = (e) => {
       const d = e.data;
-      if (d && d[0] === 0xF0 && d[1] === 0x7D) {
+      if (d && d[0] === 0xF0 && d[d.length - 1] === 0xF7 && ok(d)) {
         clearTimeout(timer);
         input.onmidimessage = null;
         resolve(Array.from(d));
       }
     };
   });
+}
+
+// Send raw SysEx and wait for the reply it earns (a generic door for the
+// Felucca editor protocol; the 0x20/0x11 helpers above stay as they are).
+export async function sendSysex(bytes, timeoutMs = 1500, accept = null) {
+  const out = findFm1();
+  if (!out) throw new Error("FM-1 not found — connect it and allow the MIDI prompt");
+  const input = findFm1Input();
+  if (!input) throw new Error("the FM-1's MIDI input is unavailable");
+  out.send(new Uint8Array(bytes));
+  return await waitReply(input, timeoutMs, accept);
 }
 
 // Send the 0x20 pattern messages, confirming each. Throws with a readable
