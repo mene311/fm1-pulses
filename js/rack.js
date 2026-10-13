@@ -602,7 +602,7 @@ async function doFreeze(slotIndex) {
 }
 
 async function doSendAll() {
-  if (profile === "felucca") { status("Felucca has 4 tracks — use Freeze with the T1–T4 picker", "err"); return; }
+  if (profile === "felucca") return doSendAllFelucca();
   if (busy || !bank.length) return;
   busy = true;
   try {
@@ -654,9 +654,11 @@ function paintProfile() {
                                          : "Write the selected slot into the FM-1 (F)";
   const fillBtn = document.getElementById("fill");
   if (fillBtn) {
-    fillBtn.disabled = isFel;
-    fillBtn.title = isFel ? "Felucca has 4 tracks, not a 16-slot bank — use Freeze per track"
-                          : "Write all 16 slots into the FM-1";
+    fillBtn.disabled = false;
+    fillBtn.textContent = isFel ? "Send A–D" : "Send 16";
+    fillBtn.title = isFel
+      ? "Write all 16 slots into the four projects A–D: slots 1–4 → A tracks 1–4, then B, C, D — replaces their steps and saves flash"
+      : "Write all 16 slots into the FM-1";
   }
   const clearBtn = document.getElementById("clearall");
   if (clearBtn) clearBtn.title = isFel ? "Clear the 64 steps of the target track on the FM-1"
@@ -701,6 +703,61 @@ async function felSetStep(track, index, st) {
   const r = await felReq(fel.CMD.TRACK_STEP, [track, index, ...fel.stepBytes(st)]);
   if (!r) throw new Error(`write refused at track ${track + 1} step ${index + 1}`);
   return fel.readStep(r);
+}
+
+// PROJECT (9): op 0 load, 1 save, 2 query; slot 0..3. The reply is op, slot, used.
+async function felProject(op, slot, timeoutMs = 2500) {
+  const r = await felReq(fel.CMD.PROJECT, [op, slot], timeoutMs, 1);
+  return r && r.length >= 3 ? { op: r[0], slot: r[1], used: r[2] } : null;
+}
+
+// "Send A–D": the Felucca equivalent of Baud Girl's Send 16. Felucca has no
+// 16-pattern bank — it has four projects, each with one 64-step sequence per
+// track — so slots 1–4 go to project A's tracks 1–4, 5–8 to B, 9–12 to C and
+// 13–16 to D. Per project: load it, write only the steps that differ, save it.
+// Loads replace the live state (the sounds of that project come with it) and a
+// save writes flash (~2 s) with the transport stopped.
+async function doSendAllFelucca() {
+  if (busy || !bank.length) return;
+  if (!confirm("Write all 16 slots into the FM-1's four projects (A–D)?\n\n" +
+               "Slots 1–4 → A tracks 1–4, 5–8 → B, 9–12 → C, 13–16 → D.\n\n" +
+               "Each project's steps are replaced (its own sounds are kept and saved back). " +
+               "Loading replaces the FM-1's live state, and saving writes flash with the transport stopped.")) return;
+  busy = true;
+  try {
+    const info = fwInfo ?? await detectFirmware();
+    const nstep = info?.nstep || 64;
+    let changedAll = 0;
+    for (let b = 0; b < 4; b++) {
+      const letter = "ABCD"[b];
+      status(`project ${letter}: loading…`);
+      const load = await felProject(0, b, 2500);
+      if (!load) throw new Error(`project ${letter}: no reply to the load — is the FM-1 connected?`);
+      let bankChanged = 0;
+      for (let t = 0; t < 4; t++) {
+        const slot = b * 4 + t;
+        const want = fel.pulseSteps(bank[slot], nstep, Math.round(state.velocity ?? 100));
+        let changed = 0;
+        for (let i = 0; i < nstep; i++) {
+          const cur = await felGetStep(t, i);
+          if (!fel.sameStep(want[i], cur)) { await felSetStep(t, i, want[i]); changed++; }
+        }
+        bankChanged += changed;
+        status(`project ${letter} · track ${t + 1} · slot ${slot + 1}: ${changed}/${nstep} steps`);
+      }
+      changedAll += bankChanged;
+      if (bankChanged === 0 && load.used) {
+        status(`project ${letter}: already matches — not saved`);
+        continue;
+      }
+      status(`project ${letter}: saving (flash, ~2 s)…`);
+      const save = await felProject(1, b, 8000);
+      if (!save) throw new Error(`project ${letter}: the save got no reply — stop the song/chain and retry`);
+    }
+    status(`all 16 slots written to projects A–D ✓ (${changedAll} steps changed)`, "ok");
+  } catch (e) {
+    status(String(e.message || e), "err");
+  } finally { busy = false; }
 }
 
 // Freeze slot -> one Felucca track. A dry run reads the track first and writes

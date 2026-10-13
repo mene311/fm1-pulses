@@ -14,8 +14,11 @@ morph in real time).
 `INFO`): **Freeze** then writes the selected slot into the **target track**
 picked with the T1–T4 selector, over the editor's `TRACK_STEP` command — a dry
 run reads the track first and writes only the steps that differ, so refreezing
-the same slot touches nothing. **Clear** empties that track's 64 steps; **Send
-16** stays a Baud Girl feature (Felucca has four tracks, not a 16-slot bank).
+the same slot touches nothing. **Clear** empties that track's 64 steps.
+**Send A–D** is the Felucca equivalent of Baud Girl's Send 16: Felucca has four
+projects of four 64-step tracks instead of a 16-pattern bank, so slots 1–4 go to
+project A's tracks 1–4, 5–8 to B, 9–12 to C and 13–16 to D; per project it loads
+it, writes only the changed steps, and saves it (flash, ~2 s, transport stopped).
 The protocol lives in `js/felucca.js` (pure codec, `node js/felucca.test.mjs`).
 
 **Signal chain:** Clock → Gate Probability → S&H → LFO → Distribution → Quantizer → MIDI out → Buffer (Loop + Deja Vu).
