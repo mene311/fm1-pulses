@@ -43,7 +43,8 @@ selected slot and morph it in real time).
       FM-1_915) over USB from the phone: INFO parsed, step write→read→restore round
       trip clean. Freeze does a dry-run diff into the T1–T4 target track. **Send
       A–D** maps slots 1–4→A, 5–8→B, 9–12→C, 13–16→D (load → 4×64-step diff →
-      save per project). PROJECT load/save still to be exercised on hardware.
+      save per project). PROJECT load/save exercised on hardware too: scale →
+      save (used=1, 0.1 s) → diverge → reload → persisted → clean-up save.
       Codec tests: `node js/felucca.test.mjs` (15 checks).
 - [x] **Freeze → FM-1** (selected) / **Send all 16**
 - [x] **7 themes** = the FM-1's own (decoded from its firmware)
