@@ -10,8 +10,8 @@ selected slot and morph it in real time).
 
 - **Live:** https://mene311.github.io/fm1-pulses/
 - **Repo:** `github.com/mene311/fm1-pulses` (public) — Pages deploys from `main` / root
-- **Local:** `~/fm1/projects/fm1-pulses/` (phone — it is phone-local, no SSH needed)
-- **Device notes / tools:** `~/Projects/mvave-fm1/` (see its README)
+- **Local:** `~/fm1/fm1-pulses/` (phone — it is phone-local, no SSH needed)
+- **Device notes / tools:** `~/fm1/mvave-fm1/` (see its README)
 - **Bluetooth:** the FM-1 has native **BLE MIDI** (documented + the standard BLE-MIDI
   GATT UUIDs are in its firmware). Plan, evidence, risks and the verification ladder live
   in **`notes/BLUETOOTH-PLAN.md`** — planned, not implemented.
@@ -321,7 +321,7 @@ Facts that are solid:
 ## How it's deployed
 
 ```bash
-cd ~/fm1/projects/fm1-pulses
+cd ~/fm1/fm1-pulses
 git add -A && git commit -m "..." && git push    # Pages rebuilds in ~1 min
 python3 -m http.server 8099                      # local (Web MIDI needs localhost/https)
 ```
