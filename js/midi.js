@@ -26,19 +26,23 @@ export function onStateChange(cb) {
   if (access) access.onstatechange = cb;
 }
 
-const NAME_RE = /fm-?1|mvave|m-vave|4c4a/i;
+// Stock / Baud Girl name themselves FM-1 or M-VAVE; Felucca (and its forks)
+// enumerate as Hügelton Instruments "Felucca" (VID 1209:0001). Match all of
+// them, and fall back to the only port when just one is present.
+const NAME_RE = /fm-?1|mvave|m-vave|4c4a|felucca|h[üu]gelton|sinco|usb-midi/i;
+const single = (ports) => (ports.size === 1 ? [...ports.values()][0] : null);
 
 export function findFm1() {
   if (!access) return null;
   for (const o of access.outputs.values()) if (NAME_RE.test(o.name)) return o;
-  return null;
+  return single(access.outputs);
 }
 
 // The FM-1's MIDI input (what the device sends back to us).
 export function findFm1Input() {
   if (!access) return null;
   for (const i of access.inputs.values()) if (NAME_RE.test(i.name)) return i;
-  return null;
+  return single(access.inputs);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

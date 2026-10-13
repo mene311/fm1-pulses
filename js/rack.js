@@ -3,7 +3,7 @@
 // pattern display inside the case below. app.js and the MVP are untouched.
 import { generate, generateBank, SCALES, LFO_WAVES, midiName, classicName } from "./generator.js?v=71";
 import { encodeWrite, emptyPattern } from "./pattern.js?v=65";
-import * as midi from "./midi.js?v=68";
+import * as midi from "./midi.js?v=69";
 import * as fel from "./felucca.js?v=1";
 import * as audio from "./audio.js?v=67";
 import { knob, sw } from "./knob.js?v=66";
