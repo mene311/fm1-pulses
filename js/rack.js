@@ -3,7 +3,7 @@
 // pattern display inside the case below. app.js and the MVP are untouched.
 import { generate, generateBank, SCALES, LFO_WAVES, midiName, classicName } from "./generator.js?v=71";
 import { encodeWrite, emptyPattern } from "./pattern.js?v=65";
-import * as midi from "./midi.js?v=69";
+import * as midi from "./midi.js?v=70";
 import * as fel from "./felucca.js?v=1";
 import * as audio from "./audio.js?v=67";
 import { knob, sw } from "./knob.js?v=66";
@@ -672,14 +672,13 @@ function paintProfile() {
 async function detectFirmware() {
   if (!midi.hasAccess() || !midi.findFm1()) { profile = null; fwInfo = null; paintProfile(); return null; }
   try {
-    const rep = await midi.sendSysex(fel.frame(fel.CMD.INFO), 1200,
-      (d) => d[1] === 0x7D && d[2] === 0x46 && d[3] === 0x4C && d[4] === fel.CMD.INFO);
-    const args = fel.reply(rep, fel.CMD.INFO);
+    const args = await felReq(fel.CMD.INFO, [], 1500, 2);      // retries: the first reply can be lost
     fwInfo = args ? fel.decodeInfo(args) : null;
   } catch { fwInfo = null; }
   profile = fwInfo ? "felucca" : "baudgirl";
   paintProfile();
   if (fwInfo) status(`FM-1 runs ${fwInfo.version} · freeze writes one of ${fwInfo.ntrk} tracks, ${fwInfo.nstep} steps`, "ok");
+  else status("FM-1 found, but it did not answer the firmware probe — using the FM-1+VA path", "err");
   return fwInfo;
 }
 
