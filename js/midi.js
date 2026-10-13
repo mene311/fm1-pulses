@@ -7,28 +7,11 @@ import { ysum } from "./pattern.js?v=68";
 
 let access = null;
 
-// Every input feeds one queue. Replies used to be caught by setting
-// `onmidimessage` only after sending, so the very first reply (the firmware
-// probe) could arrive before anyone listened and be lost. The handler now
-// lives for the whole session; waiters scan the queue.
-const rxQueue = [];                              // {id, data}
-function attachInput(input) {
-  if (!input || input.__fm1hooked) return;
-  input.__fm1hooked = true;
-  try { input.open(); } catch { /* already open */ }
-  input.onmidimessage = (e) => {
-    if (!e.data) return;
-    rxQueue.push({ id: input.id, data: e.data });
-    if (rxQueue.length > 64) rxQueue.shift();
-  };
-}
-
 export async function initMidi() {
   if (!navigator.requestMIDIAccess) {
     throw new Error("Web MIDI unsupported — use Chrome/Edge over https or localhost");
   }
   access = await navigator.requestMIDIAccess({ sysex: true });
-  for (const i of access.inputs.values()) attachInput(i);
   return listOutputs();
 }
 
@@ -40,30 +23,22 @@ export function listOutputs() {
 }
 
 export function onStateChange(cb) {
-  if (!access) return;
-  access.onstatechange = (e) => {
-    for (const i of access.inputs.values()) attachInput(i);
-    cb(e);
-  };
+  if (access) access.onstatechange = cb;
 }
 
-// Stock / Baud Girl name themselves FM-1 or M-VAVE; Felucca (and its forks)
-// enumerate as Hügelton Instruments "Felucca" (VID 1209:0001). Match all of
-// them, and fall back to the only port when just one is present.
-const NAME_RE = /fm-?1|mvave|m-vave|4c4a|felucca|h[üu]gelton|sinco|usb-midi/i;
-const single = (ports) => (ports.size === 1 ? [...ports.values()][0] : null);
+const NAME_RE = /fm-?1|mvave|m-vave|4c4a/i;
 
 export function findFm1() {
   if (!access) return null;
   for (const o of access.outputs.values()) if (NAME_RE.test(o.name)) return o;
-  return single(access.outputs);
+  return null;
 }
 
 // The FM-1's MIDI input (what the device sends back to us).
 export function findFm1Input() {
   if (!access) return null;
   for (const i of access.inputs.values()) if (NAME_RE.test(i.name)) return i;
-  return single(access.inputs);
+  return null;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -123,37 +98,19 @@ const STATUS_TEXT = {
 
 const hex = (a) => a.map((b) => b.toString(16).padStart(2, "0")).join(" ");
 
-// Wait for one SysEx reply to `input`, out of the persistent queue. `accept`
-// narrows what counts as the reply (the Felucca protocol shares the 0x7D header).
-function waitReply(input, timeoutMs, accept = null) {
-  const ok = accept || ((d) => d.length > 1 && d[1] === 0x7D);
+// Wait for one SysEx reply on the FM-1's input port.
+function waitReply(input, timeoutMs) {
   return new Promise((resolve) => {
-    const t0 = performance.now();
-    const tick = () => {
-      for (let i = 0; i < rxQueue.length; i++) {
-        const d = rxQueue[i].data;
-        if (rxQueue[i].id === input.id && d[0] === 0xF0 && d[d.length - 1] === 0xF7 && ok(d)) {
-          rxQueue.splice(i, 1);
-          resolve(Array.from(d));
-          return;
-        }
+    const timer = setTimeout(() => { input.onmidimessage = null; resolve(null); }, timeoutMs);
+    input.onmidimessage = (e) => {
+      const d = e.data;
+      if (d && d[0] === 0xF0 && d[1] === 0x7D) {
+        clearTimeout(timer);
+        input.onmidimessage = null;
+        resolve(Array.from(d));
       }
-      if (performance.now() - t0 >= timeoutMs) { resolve(null); return; }
-      setTimeout(tick, 8);
     };
-    tick();
   });
-}
-
-// Send raw SysEx and wait for the reply it earns (a generic door for the
-// Felucca editor protocol; the 0x20/0x11 helpers above stay as they are).
-export async function sendSysex(bytes, timeoutMs = 1500, accept = null) {
-  const out = findFm1();
-  if (!out) throw new Error("FM-1 not found — connect it and allow the MIDI prompt");
-  const input = findFm1Input();
-  if (!input) throw new Error("the FM-1's MIDI input is unavailable");
-  out.send(new Uint8Array(bytes));
-  return await waitReply(input, timeoutMs, accept);
 }
 
 // Send the 0x20 pattern messages, confirming each. Throws with a readable
