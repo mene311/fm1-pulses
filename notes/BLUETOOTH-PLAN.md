@@ -31,7 +31,7 @@ applies to a play-only BleTransport (notes, no SysEx, no reply parsing).
 Re-verify the UUID claim:
 
 ```bash
-cd ~/Projects/mvave-fm1/reverse
+cd ~/fm1/mvave-fm1/reverse
 xxd -p baudgirl_092_flash.bin | tr -d '\n' > /tmp/fw.hex
 for p in 00c7c44ee36c51a7334be8ed5a0eb803 f36b109d66f2a9a112416838dbe57277; do
   printf '%s: %s\n' "$p" "$(grep -o "$p" /tmp/fw.hex | wc -l)"; done   # 2 and 2
